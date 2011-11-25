@@ -1,6 +1,7 @@
-== purpose ==
+## purpose
 
 Wrap existing, large in memory object networks behind the Neo4j graph database API's to enable:
+
 * fast traversals
 * graph algorithms
 * cypher queries
@@ -8,7 +9,7 @@ Wrap existing, large in memory object networks behind the Neo4j graph database A
 * visualization
 * server
 
-== usage ==
+## usage
 
     class User {
         private String twid;
@@ -52,13 +53,13 @@ Wrap existing, large in memory object networks behind the Neo4j graph database A
     ExecutionResult result = new ExecutionEngine(gdb).execute(query, map("user", "mesirii"));
 
 
-== current state ==
+## current state
 
 * mostly readonly, some write operations supported
 * cypher, traversals, id-lookup, index-lookups work
 * no Relationship-Entity support
 
-== ideas ==
+## ideas
 
 * createNode(type)
 * find getNodeById() via traversal not by storing a map
