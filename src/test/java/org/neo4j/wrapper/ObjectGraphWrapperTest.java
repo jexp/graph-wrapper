@@ -177,20 +177,27 @@ public class ObjectGraphWrapperTest {
 
     @Test
     public void testGetProperty() {
-        final Node root = new ObjectNode(user,gdb);
+        final Node root = gdb.createNode(user);
         assertEquals(user.twid, root.getProperty("twid"));
     }
 
     @Test
     public void testGetRelationship() {
-        final Node tweetNode = new ObjectNode(tweet1,gdb);
-        assertEquals(new ObjectNode(user,gdb), tweetNode.getSingleRelationship(DynamicRelationshipType.withName("tweeted"), Direction.OUTGOING).getEndNode());
+        final Node tweetNode = gdb.createNode(tweet1);
+        assertEquals(gdb.createNode(user), tweetNode.getSingleRelationship(DynamicRelationshipType.withName("tweeted"), Direction.OUTGOING).getEndNode());
     }
 
     @Test
     public void testGetRelationshipsByDirection() {
-        final ObjectNode tweetNode = new ObjectNode(user,gdb);
+        final ObjectNode tweetNode = gdb.createNode(user);
         final Iterable<Relationship> relationships = tweetNode.getRelationships(Direction.OUTGOING);
+        final Iterable<Object> tweets = tweetNode.getEndNodeObjects(relationships);
+        assertEquals(allTweets, IteratorUtil.asCollection(tweets));
+    }
+    @Test
+    public void testGetRelationshipsByDirectionAndType() {
+        final ObjectNode tweetNode = gdb.createNode(user);
+        final Iterable<Relationship> relationships = tweetNode.getRelationships(Direction.OUTGOING, DynamicRelationshipType.withName("tweeted"));
         final Iterable<Object> tweets = tweetNode.getEndNodeObjects(relationships);
         assertEquals(allTweets, IteratorUtil.asCollection(tweets));
     }
@@ -198,7 +205,7 @@ public class ObjectGraphWrapperTest {
     @Test
     public void testSimpleCypherQuery() {
         final String query = "start n=node({user}) return n";
-        final ExecutionResult result = new ExecutionEngine(gdb).execute(query, map("user", new ObjectNode(user, gdb)));
+        final ExecutionResult result = new ExecutionEngine(gdb).execute(query, map("user", gdb.createNode(user)));
         Iterator<Object> users = gdb.getNodeValues(result.<Node>columnAs("n"));
         assertEquals(asList(user),IteratorUtil.addToCollection(users, new ArrayList()));
     }
@@ -213,9 +220,25 @@ public class ObjectGraphWrapperTest {
     @Test
     public void testCypherMatchQuery() {
         final String query = "start n=node({user}) match n-[:tweeted]->tweet return tweet";
-        final ExecutionResult result = new ExecutionEngine(gdb).execute(query, map("user", new ObjectNode(user, gdb)));
+        final ExecutionResult result = new ExecutionEngine(gdb).execute(query, map("user", gdb.createNode(user)));
         Iterator<Object> tweets = gdb.getNodeValues(result.<Node>columnAs("tweet"));
         assertEquals(allTweets,IteratorUtil.addToCollection(tweets, new ArrayList()));
+    }
+
+    @Test
+    public void testAddRelationship() {
+        final Tweet tweet5 = new Tweet("tweet5", user);
+        gdb.createNode(neo4j).createRelationshipTo(gdb.createNode(tweet5), DynamicRelationshipType.withName("tagged"));
+        assertTrue("relationship created",neo4j.tagged.contains(tweet5));
+    }
+    @Test(expected = IllegalArgumentException.class)
+    public void testAddWrongRelationshipType() {
+        final Tweet tweet5 = new Tweet("tweet5", user);
+        gdb.createNode(neo4j).createRelationshipTo(gdb.createNode(tweet5), DynamicRelationshipType.withName("tweeted"));
+    }
+    @Test(expected = IllegalArgumentException.class)
+    public void testAddWrongRelationshipTarget() {
+        gdb.createNode(neo4j).createRelationshipTo(gdb.createNode(user), DynamicRelationshipType.withName("tagged"));
     }
 
     @Test

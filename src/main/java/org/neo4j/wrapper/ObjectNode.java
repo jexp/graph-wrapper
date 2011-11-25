@@ -6,14 +6,12 @@ import org.neo4j.helpers.collection.IterableWrapper;
 import org.neo4j.helpers.collection.IteratorUtil;
 
 import java.lang.reflect.Field;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.*;
 
-import static java.util.Arrays.asList;
-import static java.util.Collections.reverseOrder;
 import static java.util.Collections.singleton;
+import static org.neo4j.helpers.collection.IteratorUtil.firstOrNull;
 
 /**
  * @author mh
@@ -35,6 +33,7 @@ public class ObjectNode implements Node {
             if (field == null) throw new RuntimeException("No such field " + name);
             field.set(value, newValue);
         } catch (IllegalAccessException e) {
+            // ignore
         }
     }
 
@@ -86,7 +85,7 @@ public class ObjectNode implements Node {
 
     @Override
     public boolean hasRelationship(RelationshipType... relationshipTypes) {
-        return false;
+        return hasRelationship(Direction.OUTGOING,relationshipTypes);
     }
 
     @Override
@@ -97,7 +96,7 @@ public class ObjectNode implements Node {
     }
 
     private boolean isNotEmpty(Iterable<Relationship> values) {
-        return IteratorUtil.firstOrNull(values) != null;
+        return firstOrNull(values) != null;
     }
 
     @Override
@@ -112,6 +111,7 @@ public class ObjectNode implements Node {
         return String.format("Node[%d]=%s",getId(),value);
     }
 
+    @SuppressWarnings("unchecked")
     private Iterable<Relationship> toRelationships(final Map<String, Field> relationshipFields) {
         return new CombiningIterable<Relationship>(new IterableWrapper<Iterable<Relationship>, Map.Entry<String, Field>>(relationshipFields.entrySet()) {
             @Override
@@ -135,23 +135,56 @@ public class ObjectNode implements Node {
     @SuppressWarnings("unchecked")
     public Iterable<Object> getRelationshipValue(RelationshipType relationshipType, Direction direction) {
         if (direction == Direction.INCOMING) return null;
-        final Object value = getValue(relationshipType.name());
-        if (isEntityCollection(value)) return (Iterable<Object>) value;
-        if (isEntity(value)) return singleton(value);
+        final String name = relationshipType.name();
+        final Field field = getField(name);
+        final Object value = getValue(name);
+        if (isEntityCollection(field)) return (Iterable<Object>) value;
+        if (isEntity(field)) return singleton(value);
         return null;
+    }
+
+    private boolean isEntity(Field field) {
+        final Class<?> type = field.getType();
+        return isEntity(type);
+    }
+
+    private boolean isEntity(Class<?> type) {
+        if (type.isPrimitive()) return false;
+        final Package fieldPackage = type.getPackage();
+        if (fieldPackage.getName().startsWith("java.")) return false;
+        return fieldPackage.equals(getPackage(value));
     }
 
     // todo check for primitives, java simple types etc
     private boolean isEntity(Object value) {
         if (value == null) return false;
-        if (getPackage(value).equals(getPackage(this.value))) return true;
-        return false;
+        return isEntity(value.getClass());
     }
 
+    private Class getActualType(Field field) {
+        final Type genericType = field.getGenericType();
+        if (genericType instanceof ParameterizedType) {
+            ParameterizedType parameterizedType = (ParameterizedType) genericType;
+            final Type actualType = parameterizedType.getActualTypeArguments()[0];
+            if (actualType instanceof Class) return (Class)actualType;
+        }
+        return Object.class;
+    }
+    private boolean isEntityCollection(Field field) {
+        final Class<?> type = field.getType();
+        if (!Iterable.class.isAssignableFrom(type)) return false;
+        final Type genericType = field.getGenericType();
+        if (genericType instanceof ParameterizedType) {
+            ParameterizedType parameterizedType = (ParameterizedType) genericType;
+            final Type actualType = parameterizedType.getActualTypeArguments()[0];
+            if (actualType instanceof Class) return isEntity((Class)actualType);
+        }
+        return isEntityCollection(getValue(field));
+    }
     private boolean isEntityCollection(Object value) {
         if (!(value instanceof Iterable)) return false;
         final Iterable<Object> iterable = (Iterable<Object>) value;
-        final Object first = IteratorUtil.firstOrNull(iterable);
+        final Object first = firstOrNull(iterable);
         return isEntity(first);
     }
 
@@ -180,7 +213,7 @@ public class ObjectNode implements Node {
     public boolean hasRelationship(RelationshipType relationshipType, Direction direction) {
         final Iterable<Object> relationshipValue = getRelationshipValue(relationshipType, direction);
         if (relationshipValue == null) return false;
-        return IteratorUtil.firstOrNull(relationshipValue) != null;
+        return firstOrNull(relationshipValue) != null;
     }
 
     @Override
@@ -190,7 +223,28 @@ public class ObjectNode implements Node {
 
     @Override
     public Relationship createRelationshipTo(Node node, RelationshipType relationshipType) {
-        throw new UnsupportedOperationException();
+        final String relType = relationshipType.name();
+        final Field field = getRelationshipFields().get(relType);
+        if (field==null) throw new IllegalArgumentException("Relationship-Type "+ relType+" invalid for fields of type "+getType());
+        ObjectNode other = (ObjectNode) node;
+        final Object otherValue = other.getValue();
+        if (isEntity(field)) {
+            if (field.getType().isInstance(otherValue)) {
+                setValue(relType, otherValue);
+                return new ObjectRelationship(this, relationshipType,other,gdb);
+            } else {
+                throw new IllegalArgumentException("Relationship-Type "+ relType+" only valid for node types " + field.getType());
+            }
+        }
+        if (isEntityCollection(field)) {
+            final Class actualType = getActualType(field);
+            if (!actualType.isInstance(otherValue)) throw new IllegalArgumentException("Relationship-Type "+ relType+" only valid for node types " + actualType);
+
+            @SuppressWarnings("unchecked") Collection<Object> values=(Collection<Object>) getValue(field);
+            values.add(otherValue);
+            return new ObjectRelationship(this,relationshipType, other,gdb);
+        }
+        throw new IllegalArgumentException("Relationship-Type "+ relType+" only valid for node types " + field.getType());
     }
 
     @Override
